@@ -4,42 +4,44 @@ using System.IO;
 using MelonLoader;
 using TMPro;
 using UnityEngine;
-
-/*
- 
-    TOFIX:
-    - Enemies  // Low prio
-    - Barrels  // Low prio
-    - Glass    // Low prio
-    - Doors    // High prio (cuz it breaks the fucking gameeeee)
- 
-*/
+using UnityEngine.UI;
 
 namespace ReplayMod
 {
     public class Main : MelonMod
     {
-        private List<Transform> transforms = new List<Transform>();
+        private List<Transform>  transforms = new List<Transform>();
 
-        private MemoryStream memoryStream = null;
-        private BinaryWriter binaryWriter = null;
-        private BinaryReader binaryReader = null;
+        private MemoryStream     memoryStream = null;
+        private BinaryWriter     binaryWriter = null;
+        private BinaryReader     binaryReader = null;
 
-        private bool recordingInitialized = false;
-        private bool recording = false;
-        private bool replaying = false;
+        private bool             recordingInitialized = false;
+        private bool             recording = false;
+        private bool             replaying = false;
 
-        private int currentRecordingFrames = 0;
-        public int maxRecordingFrames = 360;
+        private int              currentRecordingFrames = 0;
+        public int               maxRecordingFrames = 1600; // approx. 30 - 40 seconds of recording
 
-        public int replayFrameLength = 2;
-        private int replayFrameTimer = 0;
+        public int               replayFrameLength = 2;
+        private int              replayFrameTimer = 0;
 
-        private Timer tmr = null;
-        private PlayerMovement pm = null;
-        private Rigidbody prb = null;
+        private GameObject       replayUI;
+        private TextMeshProUGUI  replayText;
+        private RectTransform    replayTransform;
 
-        private float timer = 0f;
+        private GameObject       timerObj;
+        private Timer            tmr;
+
+        private GameObject       player;
+        private PlayerMovement   pm;
+        private Rigidbody        prb;
+        private Transform        ptransform;
+
+        private GameObject       camera;
+        private Transform        ctransform;
+
+        private float            timer = 0f;
 
         public override void OnApplicationStart()
         {
@@ -48,17 +50,21 @@ namespace ReplayMod
 
         private void GetAllTransforms()
         {
-            foreach (var gameObj in UnityEngine.Object.FindObjectsOfType<GameObject>())
+            if (ptransform != null)
             {
-                if (gameObj.transform != null)
+                foreach (Transform child in ptransform)
                 {
-                    if (!transforms.Contains(gameObj.transform))
-                    {
-                        if (gameObj.layer != 5 && gameObj.layer != 9 && gameObj.GetComponent<Lava>() == null && gameObj.GetComponent<Light>() == null && gameObj.GetComponent<Glass>() == null && gameObj.GetComponent<Barrel>() == null && gameObj.GetComponent<Break>() == null)
-                        {
-                            transforms.Add(gameObj.transform);
-                        }
-                    }
+                    if (!transforms.Contains(ptransform))
+                        transforms.Add(GameObject.Find("Player").transform);
+
+                    if (!transforms.Contains(child.transform))
+                        transforms.Add(child.transform);
+                }
+
+                if (ctransform != null)
+                {
+                    if (!transforms.Contains(ctransform))
+                        transforms.Add(ctransform);
                 }
             }
         }
@@ -76,12 +82,16 @@ namespace ReplayMod
 
             if (level >= 2)
             {
-                // Stop any ongoing recording or replaying. Clear the memory stream and transforms list. Else bad stuff happens.. °W°
                 if (recording)
                     StopRecording();
 
                 else if (replaying)
                     StopReplaying();
+
+                if (memoryStream != null && binaryWriter != null)
+                    ResetReplayFrame();
+
+                ResetReplayFrameTimer();
 
                 if (memoryStream != null)
                     memoryStream.SetLength(0);
@@ -89,9 +99,43 @@ namespace ReplayMod
                 transforms.Clear();
                 GetAllTransforms();
 
-                tmr = GameObject.Find("Managers (1)/UI/Game/Timer").GetComponent<Timer>();
-                pm = GameObject.Find("Player").GetComponent<PlayerMovement>();
-                prb = GameObject.Find("Player").GetComponent<Rigidbody>();
+                timerObj = GameObject.Find("Managers (1)/UI/Game/Timer");
+                tmr = timerObj.GetComponent<Timer>();
+
+                player = GameObject.Find("Player");
+                pm = player.GetComponent<PlayerMovement>();
+                prb = player.GetComponent<Rigidbody>();
+                ptransform = player.transform;
+
+                camera = GameObject.Find("Camera");
+                ctransform = camera.transform;
+
+                // ReplayUI setup
+                if (GameObject.Find("Managers (1)/UI/ReplayText") == null)
+                {
+                    replayUI = new GameObject("ReplayText");
+                    replayUI.layer = 5; // UI
+                    replayUI.transform.parent = GameObject.Find("Managers (1)/UI").transform;
+                    replayUI.transform.localPosition = new Vector3(0, 0, 0);
+                    replayUI.transform.localScale = new Vector3(1, 1, 1);
+                    replayUI.SetActive(false);
+
+                    replayText = replayUI.AddComponent<TextMeshProUGUI>();
+                }
+
+                if (replayText != null)
+                {
+                    // Text
+                    replayText.font = timerObj.GetComponent<TextMeshProUGUI>().font;
+                    replayText.richText = true;
+                    replayText.text = "owo";
+                    replayText.fontSize = 32f;
+
+                    // Text position
+                    replayTransform = replayText.GetComponent<RectTransform>();
+                    replayTransform.localPosition = new Vector3(-290f, 200f, 0f);
+                    replayTransform.sizeDelta = new Vector2(200, 50);
+                }
             }
         }
 
@@ -102,22 +146,33 @@ namespace ReplayMod
 
             if (Input.GetKeyUp(KeyCode.T))
                 StartStopReplaying();
-
-            if (Input.GetKeyUp(KeyCode.Y)) // Debug stuff to force update the transform list.
-            {
-                transforms.Clear();
-                GetAllTransforms();
-                MelonLogger.Log("Forced transforms : " + transforms.Count);
-            }
         }
 
         public override void OnFixedUpdate()
         {
-            if (recording)
-                UpdateRecording();
+            if (!replaying || !recording)
+                if (replayUI != null)
+                    replayUI.SetActive(false);
 
-            else if (replaying)
+            if (recording && replayUI != null)
+            {
+                if (!replayUI.activeSelf)
+                {
+                    replayText.text = "<color=red>Recording<color=white>";
+                    replayUI.SetActive(true);
+                }
+                UpdateRecording();
+            }
+
+            if (replaying && replayUI != null)
+            {
+                if (!replayUI.activeSelf)
+                {
+                    replayText.text = "<color=red>Replaying<color=white>";
+                    replayUI.SetActive(true);
+                }
                 UpdateReplaying();
+            }
         }
 
         public void StartStopRecording()
@@ -191,6 +246,9 @@ namespace ReplayMod
 
         public void StartStopReplaying()
         {
+            if (recording)
+                StopRecording();
+
             if (!replaying)
                 StartReplaying();
             else
@@ -298,12 +356,12 @@ namespace ReplayMod
             y = binaryReader.ReadSingle();
             z = binaryReader.ReadSingle();
             transform.eulerAngles = new Vector3(x, y, z);
-
+            
             // Velocity
             x = binaryReader.ReadSingle();
             y = binaryReader.ReadSingle();
             z = binaryReader.ReadSingle();
-            prb.velocity.Set(x, y, z);
+            prb.velocity = new Vector3(x, y, z);
 
             // Scales
             x = binaryReader.ReadSingle();
